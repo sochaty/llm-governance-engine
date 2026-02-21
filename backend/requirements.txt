@@ -1,0 +1,8 @@
+fastapi[all]
+sqlalchemy[asyncio]
+psycopg2-binary
+alembic
+openai
+ollama
+python-dotenv
+pytest
