@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: governance-db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: llm_governance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-service
+    ports:
+      - "11434:11434"
+    networks:
+      - governance-net
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
+      - OLLAMA_OPENAI_COMPATIBILITY=1
+    volumes:
+      - ollama_data:/root/.ollama
+
+  backend:
+    build: ./backend
+    container_name: governance-api
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    networks:
+      - governance-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://admin:password123@db:5432/llm_governance
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+  frontend:
+    build: ./frontend
+    container_name: governance-ui
+    ports:
+      - "4200:80"
+
+volumes:
+  postgres_data:
+  ollama_data:
+
+networks:
+  governance-net:
+    driver: bridge
