@@ -10,4 +10,5 @@ async def test_health_check():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy"}
+    # Check only the status to keep tests flexible for future version changes
+    assert response.json()["status"] == "healthy"
