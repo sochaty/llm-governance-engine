@@ -8,6 +8,13 @@ services:
       POSTGRES_DB: llm_governance
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d llm_governance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - governance-net
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -29,7 +36,8 @@ services:
     build: ./backend
     container_name: governance-api
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     networks:

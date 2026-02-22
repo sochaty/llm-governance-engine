@@ -16,3 +16,4 @@ class BenchmarkResult(Base):
     token_count = Column(Integer, nullable=True)
     estimated_cost = Column(Float, default=0.0) # Calculated ROI
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    response_preview = Column(String, nullable=True)

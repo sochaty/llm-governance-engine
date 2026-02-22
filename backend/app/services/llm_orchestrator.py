@@ -1,8 +1,13 @@
 import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import logging
 from openai import AsyncOpenAI
 from typing import AsyncGenerator, Optional, Dict
 from dataclasses import dataclass
+import time
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.models.benchmark import BenchmarkResult
 
 # Setup Enterprise Logging
 logging.basicConfig(level=logging.INFO)
@@ -84,3 +89,45 @@ class LLMOrchestrator:
             # Log the full error internally, return a sanitized version to the UI
             logger.error(f"Stream failure for {provider}: {type(e).__name__} - {str(e)}")
             yield f"Error: {provider.capitalize()} service is currently unavailable."
+
+    async def run_and_record_benchmark(
+    self, 
+    db: AsyncSession, 
+    prompt: str, 
+    provider: str
+) -> AsyncGenerator[str, None]:
+        start_time = time.time()
+        full_content = ""
+        config = self.configs.get(provider)
+        
+        try:
+            # 1. Yield the stream to the UI in real-time
+            async for chunk in self.get_streaming_response(prompt, provider):
+                full_content += chunk
+                yield chunk
+
+            # 2. Calculate Metrics after the stream finishes
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+            
+            # Simple Enterprise Cost Logic
+            # Cloud: ~$0.03 per 1k words | Local: $0.00
+            word_count = len(full_content.split())
+            estimated_cost = (word_count * 0.00003) if provider == "cloud" else 0.0
+
+            # 3. Create Database Record
+            new_result = BenchmarkResult(
+                prompt=prompt,
+                provider=provider,
+                model_name=config.name if config else "unknown",
+                latency_ms=latency_ms,
+                estimated_cost=estimated_cost,
+                response_preview=full_content[:200] # Store a snippet for the UI history
+            )
+
+            db.add(new_result)
+            await db.commit()
+            logger.info(f"Benchmark saved: {provider} | {latency_ms}ms")
+
+        except Exception as e:
+            logger.error(f"Failed to record benchmark: {e}")
