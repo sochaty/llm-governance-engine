@@ -6,3 +6,4 @@ openai
 ollama
 python-dotenv
 pytest
+httpx
