@@ -1,27 +1,82 @@
 <div class="dashboard-container">
-  <header>
-    <h1>LLM Governance Engine</h1>
-    <p>Benchmark Frontier vs. Local Models in Real-Time</p>
+  <header class="main-header">
+    <div class="header-content">
+      <h1>Governance Insights</h1>
+      <p>Real-time ROI analysis of Cloud vs. Local LLM usage.</p>
+    </div>
+    <button class="refresh-btn" (click)="loadData()">
+      <span>🔄</span> Update Analytics
+    </button>
   </header>
 
   <section class="input-area">
     <textarea [(ngModel)]="userPrompt" placeholder="Enter a complex prompt to test ROI..."></textarea>
-    <button (click)="runBenchmark()" [disabled]="llmService.isStreaming()">
-      {{ llmService.isStreaming() ? 'Analyzing...' : 'Run Benchmark' }}
+    <button class="run-btn" (click)="runBenchmark()" [disabled]="llmService.isStreaming()">
+      {{ llmService.isStreaming() ? 'Analyzing Stream...' : 'Run Benchmark' }}
     </button>
   </section>
 
   <div class="comparison-grid">
     <div class="card frontier">
-      <h3>Frontier (GPT-5 Cloud)</h3>
-      <div class="metrics">Latency: {{ cloudTime() }}ms</div>
+      <div class="card-header">
+        <h3>Frontier (GPT-4o Cloud)</h3>
+        <span class="status-pill">Cloud</span>
+      </div>
+      <div class="metrics">Latency: {{ cloudTime() }}ms | Est. Cost: ${{ (stats.avg_cloud_cost || 0.03).toFixed(4) }}</div>
       <div class="content">{{ cloudResponse() }}</div>
     </div>
 
     <div class="card local">
-      <h3>Local (Llama 4 / DeepSeek)</h3>
+      <div class="card-header">
+        <h3>Local (Llama 3.2 / Ollama)</h3>
+        <span class="status-pill">Edge</span>
+      </div>
       <div class="metrics">Latency: {{ localTime() }}ms | Cost: $0.00</div>
       <div class="content">{{ localResponse() }}</div>
     </div>
   </div>
+
+  <div class="stats-grid">
+    <div class="stat-card savings">
+      <small>Total Cloud Credits Saved</small>
+      <p>${{ stats.total_savings }}</p>
+      <div class="progress-bar"><div [style.width]="'100%'"></div></div>
+    </div>
+    <div class="stat-card">
+      <small>Total Governance Audits</small>
+      <p>{{ stats.total_requests }}</p>
+    </div>
+    <div class="stat-card">
+      <small>Local Latency (Avg)</small>
+      <p>{{ stats.avg_local_latency }}ms</p>
+    </div>
+  </div>
+
+  <section class="history-section">
+    <div class="section-header">
+      <h2>Audit History</h2>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Provider</th>
+            <th>Model</th>
+            <th>Latency</th>
+            <th>Preview</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let entry of history">
+            <td>{{ entry.created_at | date:'shortTime' }}</td>
+            <td><span class="badge" [ngClass]="entry.provider">{{ entry.provider }}</span></td>
+            <td>{{ entry.model_name }}</td>
+            <td>{{ entry.latency_ms }}ms</td>
+            <td class="preview-text">{{ entry.response_preview }}...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
