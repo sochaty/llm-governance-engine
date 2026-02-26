@@ -53,6 +53,10 @@ services:
     container_name: governance-ui
     ports:
       - "4200:80"
+    networks:         # <--- Add this
+      - governance-net # <--- Add this
+    depends_on:       # <--- Good practice to wait for backend
+      - backend
 
 volumes:
   postgres_data:

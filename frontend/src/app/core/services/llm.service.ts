@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { environment } from '@env/environment';
 
 @Injectable({
   providedIn: 'root',
@@ -13,7 +14,7 @@ export class LlmService {
     this.isStreaming.set(true);
     
     try {
-      const response = await fetch(`${this.baseUrl}/benchmark/stream?prompt=${encodeURIComponent(prompt)}&provider=${provider}`);
+      const response = await fetch(`${environment.apiUrl}/benchmark/stream?prompt=${encodeURIComponent(prompt)}&provider=${provider}`);
       
       if (!response.body) throw new Error('No readable stream available');
       
