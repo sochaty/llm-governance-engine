@@ -52,7 +52,7 @@
     </div>
   </div>
 
-  <section class="history-section">
+  <!-- <section class="history-section">
     <div class="section-header">
       <h2>Audit History</h2>
     </div>
@@ -78,5 +78,19 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </section> -->
+  <section class="visualization-area">
+  <div class="section-header">
+    <h2>Performance Comparison Profile</h2>
+    <p>Multi-dimensional analysis of model behavior</p>
+  </div>
+  
+  <div class="chart-wrapper">
+    <canvas baseChart
+  [data]="radarChartData"
+  [options]="radarChartOptions"
+  [type]="'radar'">
+</canvas>
+  </div>
+</section>
 </div>

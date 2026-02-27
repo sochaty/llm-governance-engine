@@ -132,6 +132,12 @@
   }
 }
 
+.chart-wrapper {
+  position: relative;
+  // height: 400px;  /* Crucial: Must have a fixed height */
+  // width: 100%;
+}
+
 .history-section {
   background: #1e293b;
   border-radius: 12px;
