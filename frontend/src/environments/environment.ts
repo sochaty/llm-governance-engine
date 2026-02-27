@@ -1,4 +1,4 @@
 export const environment = {
   production: false,
-  apiUrl: 'http://localhost:4200/api'  // This routes through Nginx to your Backend
+  apiUrl: '/api'  // This routes through Nginx to your Backend
 };

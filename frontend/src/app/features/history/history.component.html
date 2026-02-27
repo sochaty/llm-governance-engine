@@ -1,1 +1,75 @@
-<p>history works!</p>
+<div class="history-container">
+  <header class="main-header">
+    <div class="title-group">
+      <h1>Audit Vault</h1>
+      <p>Full governance trail for all LLM transactions</p>
+    </div>
+    <div class="search-box">
+      <input 
+        [(ngModel)]="searchTerm" 
+        (input)="applyFilter()" 
+        placeholder="Filter audits by prompt or model..."
+      >
+    </div>
+  </header>
+
+  <div class="vault-card">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Provider</th>
+            <th>Prompt Preview</th>
+            <th>Security Status</th>
+            <th>Latency</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let audit of paginatedData">
+            <td class="timestamp">{{ audit.created_at | date:'MMM d, HH:mm' }}</td>
+            <td>
+              <span class="provider-badge" [ngClass]="audit.provider === 'cloud' ? 'cloud' : 'local'">
+                {{ audit.provider }}
+              </span>
+            </td>
+            <td>
+              <div class="preview-text" [title]="audit.prompt">{{ audit.prompt }}</div>
+            </td>
+            <td>
+              <div class="security-tag" [ngClass]="audit.pii_detected ? 'leak' : 'secure'">
+                <span class="status-indicator">●</span>
+                {{ audit.pii_detected ? 'PII Detected' : 'Secure' }}
+              </div>
+            </td>
+            <td class="timestamp">{{ audit.latency_ms }}ms</td>
+            <td>
+              <button (click)="exportToPDF(audit)" class="download-btn">
+                Generate Report
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination-bar">
+      <div class="info">
+        Showing page <strong>{{currentPage}}</strong> of {{totalPages}}
+      </div>
+      <div class="nav-btns">
+        <button 
+          [disabled]="currentPage === 1" 
+          (click)="currentPage = currentPage - 1">
+          Previous
+        </button>
+        <button 
+          [disabled]="currentPage === totalPages" 
+          (click)="currentPage = currentPage + 1">
+          Next
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
