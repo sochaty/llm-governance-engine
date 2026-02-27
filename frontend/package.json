@@ -46,6 +46,7 @@
     "@angular/platform-browser-dynamic": "^21.1.5",
     "@types/jasmine": "^6.0.0",
     "@types/node": "^25.3.2",
+    "@vitest/coverage-v8": "^4.0.18",
     "@vitest/ui": "^4.0.18",
     "jsdom": "^27.1.0",
     "typescript": "~5.9.2",
