@@ -1,1 +1,15 @@
-<router-outlet />
+<nav class="nav-bar">
+  <div class="nav-container">
+    <div class="brand">
+      <span class="logo">🛡️</span> 
+      <span class="brand-name">LLM Audit<span class="highlight">Pro</span></span>
+    </div>
+    <div class="nav-links">
+      <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
+      <a routerLink="/history" routerLinkActive="active">Audit Vault</a>
+    </div>
+  </div>
+</nav>
+<main>
+  <router-outlet></router-outlet>
+</main>
