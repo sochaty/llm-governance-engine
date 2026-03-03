@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import logging
 from openai import AsyncOpenAI
 from typing import AsyncGenerator, Optional, Dict
+from .audit_service import AuditService
 from dataclasses import dataclass
 import time
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ class ModelConfig:
 
 class LLMOrchestrator:
     def __init__(self):
+        self.audit_service = AuditService()
         # Configuration is loaded once from environment variables
         self.configs: Dict[str, ModelConfig] = {
             "cloud": ModelConfig(
@@ -109,6 +111,12 @@ class LLMOrchestrator:
             # 2. Calculate Metrics after the stream finishes
             end_time = time.time()
             latency_ms = int((end_time - start_time) * 1000)
+
+            # SCAN FOR PII (Both input and output)
+            pii_detected = self.audit_service.scan_for_pii(prompt) or \
+                           self.audit_service.scan_for_pii(full_content)
+            
+            safety_score = self.audit_service.calculate_safety_score(pii_detected)
             
             # Simple Enterprise Cost Logic
             # Cloud: ~$0.03 per 1k words | Local: $0.00
@@ -122,12 +130,15 @@ class LLMOrchestrator:
                 model_name=config.name if config else "unknown",
                 latency_ms=latency_ms,
                 estimated_cost=estimated_cost,
-                response_preview=full_content[:200] # Store a snippet for the UI history
+                response_preview=full_content[:200], # Store a snippet for the UI history
+                pii_detected=pii_detected,      # Storing the flag
+                safety_score=safety_score,      # Storing the score
+                version_tag=config.name if config else "v1"
             )
 
             db.add(new_result)
             await db.commit()
-            logger.info(f"Benchmark saved: {provider} | {latency_ms}ms")
+            logger.info("Benchmark saved with Audit: %s | PII: %s | Safety Score: %.2f", provider, pii_detected, safety_score)
 
         except Exception as e:
-            logger.error(f"Failed to record benchmark: {e}")
+            logger.error("Failed to record benchmark: %s", e)
