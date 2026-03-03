@@ -54,6 +54,7 @@ export class HistoryComponent implements OnInit{
   }
 
   exportToPDF(record: any) {
+    console.log('Exporting record:', record.id);
     const doc = new jsPDF();
   const timestamp = new Date(record.created_at).toLocaleString();
 
