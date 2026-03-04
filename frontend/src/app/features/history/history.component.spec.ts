@@ -79,13 +79,19 @@ describe('HistoryComponent', () => {
   });
 
   it('should call exportToPDF and log to console', () => {
-    // Vitest uses vi.spyOn
-    const logSpy = vi.spyOn(console, 'log');
-    
-    fixture.detectChanges();
-    httpMock.expectOne(`${environment.apiUrl}/benchmark/history`).flush(mockHistoryData);
+  // 1. Setup Spy
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  
+  fixture.detectChanges();
+  httpMock.expectOne(`${environment.apiUrl}/benchmark/history`).flush(mockHistoryData);
 
-    component.exportToPDF(mockHistoryData[0]);
-    expect(logSpy).toHaveBeenCalledWith('Exporting record:', 1);
-  });
+  // 2. Execute
+  component.exportToPDF(mockHistoryData[0]);
+  
+  // 3. Assert
+  expect(logSpy).toHaveBeenCalledWith('Exporting record:', 1);
+  
+  // 4. Cleanup
+  logSpy.mockRestore();
+});
 });
