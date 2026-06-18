@@ -1,49 +1,149 @@
-name: CI Pipeline
+name: CI
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  push:
+    branches: [main]
 
 jobs:
+  # ── Backend: pytest + 90 % coverage gate ────────────────────────────────────
   backend-tests:
+    name: Backend tests (Python 3.12)
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
+
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - name: Install Dependencies
-        run: |
-          cd backend
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest httpx anyio
-      - name: Run Pytest
-        run: |
-          cd backend
-          python -m pytest
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
-  frontend-tests:
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # Smaller spaCy model keeps CI fast; en_core_web_lg is optional
+          python -m spacy download en_core_web_sm
+
+      - name: Run pytest with coverage gate
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SETTINGS_SECRET_KEY: ""
+        run: python -m pytest
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  # ── Frontend: Angular production build check ─────────────────────────────────
+  frontend-build:
+    name: Frontend build (Node 20)
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Node.js
+
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Dependencies
-        run: |
-          cd frontend
-          # Crucial: Use legacy-peer-deps to handle the Angular 21/Analog conflict
-          npm install --legacy-peer-deps
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install --legacy-peer-deps
 
-      - name: Run Vitest
+      - name: Build (production)
+        working-directory: frontend
+        run: npx ng build --configuration=production
+
+  # ── Docker Compose smoke + Playwright e2e ────────────────────────────────────
+  e2e:
+    name: E2E smoke tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-build]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Start the full stack ─────────────────────────────────────────────────
+      - name: Create env file from example
+        run: cp .env.example .env
+
+      - name: Start Docker Compose stack
+        run: docker compose up -d --build
+
+      - name: Wait for backend health
         run: |
-          cd frontend
-          # Run in CI mode (non-watch, exit on failure)
-          npx vitest --run --coverage
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/health; then
+              echo ""; echo "Backend healthy after ${i} attempts."; break
+            fi
+            echo "Attempt $i/30 — waiting 5s…"; sleep 5
+            if [ "$i" = "30" ]; then
+              echo "Backend never became healthy."; docker compose logs backend; exit 1
+            fi
+          done
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:4200 > /dev/null; then
+              echo "Frontend healthy."; break
+            fi
+            echo "Attempt $i/20 — waiting 5s…"; sleep 5
+            if [ "$i" = "20" ]; then
+              echo "Frontend never responded."; docker compose logs frontend; exit 1
+            fi
+          done
+
+      # ── Playwright setup ─────────────────────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright and dependencies
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      # ── Run tests ────────────────────────────────────────────────────────────
+      - name: Run Playwright smoke tests
+        working-directory: e2e
+        env:
+          BASE_URL: "http://localhost:4200"
+          CI: "true"
+        run: npx playwright test
+
+      # ── Artifacts ────────────────────────────────────────────────────────────
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-screenshots
+          path: e2e/test-results/
+
+      # ── Teardown ─────────────────────────────────────────────────────────────
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ── Build & push Docker images to GHCR ───────────────────────────────────────
+  build-images:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: meta
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ steps.meta.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:latest
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ steps.meta.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:latest
+
+  # ── Create GitHub Release with startup bundle ──────────────────────────────
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-images
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: meta
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release artifact
+        run: |
+          mkdir -p release-bundle
+          # Compose file pointing at GHCR images (no build required)
+          sed \
+            -e 's|build: ./backend|image: ghcr.io/${{ github.repository }}/backend:${{ steps.meta.outputs.VERSION }}|g' \
+            -e 's|build: ./frontend|image: ghcr.io/${{ github.repository }}/frontend:${{ steps.meta.outputs.VERSION }}|g' \
+            docker-compose.yml > release-bundle/docker-compose.yml
+          cp .env.example release-bundle/.env.example
+          # Convenience startup script
+          cat > release-bundle/start.sh << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            echo "Created .env from .env.example — add your API keys and re-run."
+            exit 0
+          fi
+          docker compose pull
+          docker compose up -d
+          echo ""
+          echo "  Governance Engine is running!"
+          echo "  Dashboard  → http://localhost:4200"
+          echo "  API docs   → http://localhost:8000/docs"
+          EOF
+          chmod +x release-bundle/start.sh
+          tar -czf llm-governance-engine-${{ steps.meta.outputs.VERSION }}.tar.gz -C release-bundle .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "LLM Governance Engine ${{ steps.meta.outputs.VERSION }}"
+          body: |
+            ## Quick start
+
+            ```bash
+            tar -xzf llm-governance-engine-${{ steps.meta.outputs.VERSION }}.tar.gz
+            cp .env.example .env          # fill in your API keys
+            bash start.sh
+            ```
+
+            | Service    | URL                       |
+            |-----------|---------------------------|
+            | Dashboard  | http://localhost:4200     |
+            | API docs   | http://localhost:8000/docs|
+
+            Docker images are published to GHCR:
+            - `ghcr.io/${{ github.repository }}/backend:${{ steps.meta.outputs.VERSION }}`
+            - `ghcr.io/${{ github.repository }}/frontend:${{ steps.meta.outputs.VERSION }}`
+          files: llm-governance-engine-${{ steps.meta.outputs.VERSION }}.tar.gz
+          generate_release_notes: true
