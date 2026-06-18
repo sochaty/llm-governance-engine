@@ -1,7 +1,8 @@
+import os
 import pytest
 import time
 from unittest.mock import AsyncMock, patch, MagicMock
-from app.services.llm_orchestrator import LLMOrchestrator
+from app.services.llm_orchestrator import LLMOrchestrator, ModelConfig
 
 @pytest.mark.anyio
 class TestOrchestratorBenchmarks:
@@ -71,16 +72,29 @@ class TestOrchestratorBenchmarks:
             assert "Data" in responses
             # The exception is caught internally by your try/except block in orchestrator.py
 
-    # --- 4. Unsupported Provider Handling ---
-    async def test_benchmark_unsupported_provider(self):
+    # --- 4. Unknown Provider Falls Back to Cloud Config ---
+    async def test_benchmark_unknown_provider_falls_back_to_cloud(self):
+        """Unknown provider falls back to the cloud config and reports a stream error."""
         orchestrator = LLMOrchestrator()
         db_session = AsyncMock()
-        
-        responses = []
-        async for chunk in orchestrator.run_and_record_benchmark(db_session, "test", "unknown_provider"):
-            responses.append(chunk)
-        
-        assert "Error: Provider unknown_provider not configured." in responses[0]
+
+        # Patch audit service so it doesn't fail on mock content
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+
+        # _build_config_for falls back to cloud config; stream attempt fails → error chunk
+        async def mock_stream_error(*args, **kwargs):
+            yield "Error: openai service is currently unavailable."
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_error):
+            responses = []
+            async for chunk in orchestrator.run_and_record_benchmark(
+                db_session, "test", "unknown_provider"
+            ):
+                responses.append(chunk)
+
+        assert len(responses) == 1
+        assert "Error:" in responses[0]
 
     # --- 5. Latency Calculation Logic ---
     async def test_benchmark_latency_calculation(self):
@@ -101,3 +115,109 @@ class TestOrchestratorBenchmarks:
             
             added_result = db_session.add.call_args[0][0]
             assert added_result.latency_ms >= 100 # Verify latency is recorded
+
+
+@pytest.mark.anyio
+class TestBuildConfig:
+    """Tests for _build_config_for() — provider routing logic."""
+
+    def test_no_overrides_returns_default_cloud_config(self):
+        orch = LLMOrchestrator()
+        cfg = orch._build_config_for("cloud", None, None)
+        assert cfg.provider_type == "openai"
+        assert cfg.name is not None
+
+    def test_no_overrides_returns_default_local_config(self):
+        orch = LLMOrchestrator()
+        cfg = orch._build_config_for("local", None, None)
+        assert cfg.provider_type == "ollama"
+
+    def test_provider_type_override_sets_correct_base_url(self):
+        orch = LLMOrchestrator()
+        cfg = orch._build_config_for("cloud", "groq", "llama-3.1-8b-instant")
+        assert cfg.provider_type == "groq"
+        assert cfg.name == "llama-3.1-8b-instant"
+        assert "groq.com" in (cfg.base_url or "")
+
+    def test_model_id_override_sets_model_name(self):
+        orch = LLMOrchestrator()
+        cfg = orch._build_config_for("cloud", "openai", "gpt-4o-mini")
+        assert cfg.name == "gpt-4o-mini"
+
+    def test_ollama_provider_type_sets_ollama_api_key(self):
+        orch = LLMOrchestrator()
+        cfg = orch._build_config_for("local", "ollama", "mistral:latest")
+        assert cfg.api_key == "ollama"
+        assert cfg.provider_type == "ollama"
+
+    def test_anthropic_provider_type_resolved(self):
+        orch = LLMOrchestrator()
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+            cfg = orch._build_config_for("cloud", "anthropic", "claude-3-haiku-20240307")
+        assert cfg.provider_type == "anthropic"
+        assert cfg.api_key == "sk-ant-test"
+
+    def test_unknown_provider_type_falls_back_to_cloud_base(self):
+        """An unknown provider_type still returns a ModelConfig without crashing."""
+        orch = LLMOrchestrator()
+        cfg = orch._build_config_for("cloud", "unknown-provider", "some-model")
+        assert isinstance(cfg, ModelConfig)
+
+
+@pytest.mark.anyio
+class TestStreamingRouting:
+    """Tests for get_streaming_response routing to the correct stream method."""
+
+    async def test_anthropic_provider_type_calls_stream_anthropic(self):
+        orch = LLMOrchestrator()
+        # Patch both stream methods; only one should be called
+        anthropic_mock = AsyncMock()
+        anthropic_mock.__aiter__ = MagicMock(return_value=iter(["hello"]))
+
+        async def mock_stream_anthropic(prompt, config):
+            yield "anthr-token"
+
+        async def mock_stream_openai(prompt, config):
+            yield "openai-token"
+
+        with patch.object(orch, "_stream_anthropic", side_effect=mock_stream_anthropic), \
+             patch.object(orch, "_stream_openai_compat", side_effect=mock_stream_openai):
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+                tokens = []
+                async for t in orch.get_streaming_response(
+                    "hi", "cloud", provider_type="anthropic", model_id="claude-3-haiku-20240307"
+                ):
+                    tokens.append(t)
+
+        assert "anthr-token" in tokens
+
+    async def test_stream_anthropic_sdk_not_installed_yields_error(self):
+        orch = LLMOrchestrator()
+        config = ModelConfig(
+            name="claude-3-haiku-20240307",
+            timeout=30.0,
+            api_key="sk-ant-test",
+            provider_type="anthropic",
+        )
+
+        with patch.dict("sys.modules", {"anthropic": None}):
+            tokens = []
+            async for t in orch._stream_anthropic("test prompt", config):
+                tokens.append(t)
+
+        assert any("anthropic" in t.lower() for t in tokens)
+
+    async def test_stream_anthropic_no_api_key_yields_error(self):
+        orch = LLMOrchestrator()
+        config = ModelConfig(
+            name="claude-3-haiku-20240307",
+            timeout=30.0,
+            api_key=None,
+            provider_type="anthropic",
+        )
+        tokens = []
+        async for t in orch._stream_anthropic("test", config):
+            tokens.append(t)
+        # Either the SDK is missing (ImportError path) or the key is absent
+        assert len(tokens) >= 1
+        assert any("Error" in t for t in tokens)

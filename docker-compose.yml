@@ -44,28 +44,33 @@ services:
       - governance-net
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./policies:/app/policies
     environment:
       - DATABASE_URL=postgresql+asyncpg://admin:password123@db:5432/llm_governance
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      # - NVIDIA_VISIBLE_DEVICES=all
-      # - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu, utility]
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - SETTINGS_SECRET_KEY=${SETTINGS_SECRET_KEY}
+      - GOVERNANCE_POLICY_PATH=policies/default.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   frontend:
     build: ./frontend
     container_name: governance-ui
     ports:
       - "4200:80"
-    networks:         # <--- Add this
-      - governance-net # <--- Add this
-    depends_on:       # <--- Good practice to wait for backend
-      - backend
+    networks:
+      - governance-net
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:

@@ -37,17 +37,22 @@
   a {
     color: #94a3b8;
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 500;
-    transition: all 0.2s;
-    padding: 0.5rem 0;
-    border-bottom: 2px solid transparent;
+    transition: color 0.15s;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
 
-    &:hover { color: #38bdf8; }
-    
+    &:hover { color: #f1f5f9; background: rgba(255,255,255,0.05); }
+
     &.active {
       color: #38bdf8;
-      border-bottom-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.08);
     }
   }
+
+  .nav-icon { font-size: 0.85rem; }
 }

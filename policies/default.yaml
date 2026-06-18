@@ -1,0 +1,57 @@
+version: "1.0"
+name: "default"
+
+# Default governance policy — shipped with the repo.
+# Edit this file and POST /api/v1/policies/reload to apply changes
+# without restarting the server.
+#
+# Supported conditions:
+#   pii_detected        — fires when Presidio detects PII above `threshold` confidence
+#   safety_score_below  — fires when the computed safety score is below `threshold`
+#   cost_exceeds        — fires when estimated per-request cost exceeds `threshold` USD
+#   model_is            — fires whenever the request targets a model in `models`
+#
+# Supported actions:  block | warn | alert
+# Supported severity: low | medium | high | critical
+
+rules:
+  - id: pii-cloud-block
+    name: "Block PII from cloud models"
+    description: >
+      Prevents prompts containing PII from being sent to cloud LLM providers.
+      Any PII detected with confidence >= 0.7 triggers an immediate block.
+    condition: pii_detected
+    threshold: 0.7
+    models:
+      - cloud
+      - gpt-4o
+      - gpt-4
+      - gpt-4-turbo
+    action: block
+    severity: critical
+    webhook_url: null  # set to your Slack/Teams URL, e.g. ${SLACK_WEBHOOK_URL}
+
+  - id: low-safety-warn
+    name: "Warn on low safety score"
+    description: >
+      Logs a warning when the computed safety score falls below 0.5,
+      indicating that PII or sensitive content may be present.
+    condition: safety_score_below
+    threshold: 0.5
+    action: warn
+    severity: medium
+    webhook_url: null
+
+  - id: pii-local-alert
+    name: "Alert on PII sent to local models"
+    description: >
+      Even local models should not process high-confidence PII.
+      This rule alerts (but does not block) so the event is audited.
+    condition: pii_detected
+    threshold: 0.85
+    models:
+      - local
+      - llama3.2:latest
+    action: alert
+    severity: high
+    webhook_url: null

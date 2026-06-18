@@ -1,0 +1,59 @@
+version: "1.0"
+name: "gdpr"
+
+# GDPR-aligned governance policy.
+#
+# The General Data Protection Regulation (GDPR) Article 5 requires that
+# personal data is processed lawfully and with appropriate safeguards.
+# Sending personal data to third-party LLM APIs without explicit consent
+# and a Data Processing Agreement (DPA) may constitute a breach.
+#
+# This policy blocks PII from cloud providers, warns on borderline safety
+# scores, and alerts when PII reaches local models for audit trail purposes.
+#
+# Usage:
+#   GOVERNANCE_POLICY_PATH=policies/gdpr.yaml
+#   or POST /api/v1/policies/reload?path=policies/gdpr.yaml
+
+rules:
+  - id: gdpr-pii-cloud-block
+    name: "GDPR: Block personal data from cloud models"
+    description: >
+      GDPR Art. 5(1)(f) requires appropriate security for personal data.
+      Block prompts containing PII (confidence >= 0.6) from cloud providers
+      unless a Data Processing Agreement is in place and documented.
+    condition: pii_detected
+    threshold: 0.6
+    models:
+      - cloud
+      - gpt-4o
+      - gpt-4
+      - gpt-4-turbo
+    action: block
+    severity: critical
+    webhook_url: null
+
+  - id: gdpr-safety-warn
+    name: "GDPR: Warn on reduced safety score"
+    description: >
+      Log a warning when the safety score drops below 0.7, which may
+      indicate borderline personal data that requires legal basis review.
+    condition: safety_score_below
+    threshold: 0.7
+    action: warn
+    severity: medium
+    webhook_url: null
+
+  - id: gdpr-pii-local-audit
+    name: "GDPR: Audit personal data on local models"
+    description: >
+      Local model processing is lower risk but still requires an audit
+      trail under GDPR Art. 30 (Records of Processing Activities).
+    condition: pii_detected
+    threshold: 0.6
+    models:
+      - local
+      - llama3.2:latest
+    action: alert
+    severity: low
+    webhook_url: null

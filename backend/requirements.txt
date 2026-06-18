@@ -1,8 +1,11 @@
 fastapi[all]
+cryptography>=42.0.0
+pyyaml>=6.0
 sqlalchemy[asyncio]
 psycopg2-binary
 alembic
 openai
+anthropic>=0.40.0
 ollama
 python-dotenv
 httpx
