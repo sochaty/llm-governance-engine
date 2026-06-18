@@ -36,3 +36,6 @@ venv
 
 # vscode
 .vscode/
+"backend/.coverage" 
+"backend/coverage.xml" 
+"__pycache__" 
