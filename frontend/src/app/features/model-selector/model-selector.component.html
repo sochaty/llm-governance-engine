@@ -1,0 +1,126 @@
+<div class="model-selector">
+
+  <!-- ────────────────────────── CLOUD SIDE ────────────────────────── -->
+  <div class="selector-panel cloud-panel">
+    <div class="panel-label">
+      <span class="dot cloud-dot"></span>
+      Cloud Model
+    </div>
+
+    <!-- Provider tabs -->
+    <div class="provider-tabs">
+      @for (provider of modelService.cloudProviders(); track provider.id) {
+        <button
+          class="provider-tab"
+          [class.active]="activeCloudProvider() === provider.id"
+          [class.unconfigured]="!provider.key_configured"
+          (click)="selectCloudProvider(provider.id)"
+          [title]="provider.key_configured ? provider.name : provider.name + ' (key not configured)'"
+        >
+          {{ provider.name }}
+          @if (!provider.key_configured) {
+            <span class="key-warn">!</span>
+          }
+        </button>
+      }
+    </div>
+
+    <!-- Model list for selected provider -->
+    @if (currentProvider) {
+      <div class="model-list">
+        @for (model of currentProvider.models; track model.id) {
+          <button
+            class="model-item"
+            [class.selected]="selectedCloudModel() === model.id"
+            (click)="selectCloudModel(currentProvider!.id, model.id, model.name)"
+          >
+            <span class="model-item-name">{{ model.name }}</span>
+            <span class="model-item-meta">
+              {{ model.context }}
+              @if (model.cost_per_1m_output !== null) {
+                · ${{ model.cost_per_1m_output }}/1M
+              }
+            </span>
+          </button>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- ────────────────────────── LOCAL SIDE ────────────────────────── -->
+  <div class="selector-panel local-panel">
+    <div class="panel-label">
+      <span class="dot local-dot"></span>
+      Local Model (Ollama)
+    </div>
+
+    <!-- Installed models -->
+    @if (modelService.installedModels().length > 0) {
+      <div class="model-list">
+        @for (model of modelService.installedModels(); track model.name) {
+          <button
+            class="model-item"
+            [class.selected]="selectedLocalModel() === model.name"
+            (click)="selectLocalModel(model.name)"
+          >
+            <span class="model-item-name">{{ model.name }}</span>
+            <span class="model-item-meta">{{ model.size_gb }} GB</span>
+          </button>
+        }
+      </div>
+    } @else {
+      <p class="empty-hint">No models installed. Browse the catalog to pull one.</p>
+    }
+
+    <!-- Catalog toggle -->
+    <button class="catalog-toggle" (click)="showCatalog.set(!showCatalog())">
+      {{ showCatalog() ? '▲ Hide catalog' : '▼ Browse catalog' }}
+    </button>
+
+    @if (showCatalog()) {
+      <input
+        class="catalog-search"
+        type="text"
+        placeholder="Filter models..."
+        [ngModel]="catalogFilter()"
+        (ngModelChange)="catalogFilter.set($event)"
+      />
+
+      <div class="catalog-list">
+        @for (model of filteredCatalog; track model.name) {
+          <div class="catalog-item">
+            <div class="catalog-item-info">
+              <span class="catalog-item-name">{{ model.display_name }}</span>
+              <span class="catalog-item-size">{{ model.size }}</span>
+              <span class="catalog-item-desc">{{ model.description }}</span>
+              <div class="catalog-tags">
+                @for (tag of model.tags; track tag) {
+                  <span class="tag">{{ tag }}</span>
+                }
+              </div>
+            </div>
+            @if (isInstalled(model.name)) {
+              <span class="installed-badge">Installed</span>
+            } @else if (modelService.pulling() === model.name) {
+              <div class="pull-progress">
+                <div class="progress-bar-track">
+                  <div class="progress-bar-fill" [style.width]="(modelService.pullProgress()?.percent ?? 0) + '%'"></div>
+                </div>
+                <span class="progress-label">{{ pullProgressLabel() }}</span>
+              </div>
+            } @else {
+              <button
+                class="pull-btn"
+                [disabled]="modelService.pulling() !== null"
+                (click)="pullModel(model.name)"
+              >
+                Pull
+              </button>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+</div>

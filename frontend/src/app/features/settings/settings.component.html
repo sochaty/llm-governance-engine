@@ -1,0 +1,105 @@
+<div class="settings-container">
+  <header class="page-header">
+    <div>
+      <h1>Settings</h1>
+      <p>Configure API keys and runtime options. Keys are encrypted with Fernet before storage in PostgreSQL.</p>
+    </div>
+  </header>
+
+  @if (settingsService.saveSuccess()) {
+    <div class="toast toast-success">✓ Settings saved successfully.</div>
+  }
+  @if (settingsService.saveError()) {
+    <div class="toast toast-error">✕ {{ settingsService.saveError() }}</div>
+  }
+
+  @if (loading()) {
+    <div class="loading-hint">Loading settings…</div>
+  } @else {
+    @for (section of sections; track section.id) {
+      <section class="settings-section">
+        <div class="section-header">
+          <span class="section-icon">{{ section.icon }}</span>
+          <div>
+            <h2>{{ section.label }}</h2>
+            <p>{{ section.description }}</p>
+          </div>
+        </div>
+
+        <div class="fields">
+          @for (entry of settingsForSection(section.id); track entry.key) {
+            <div class="field-row">
+              <div class="field-meta">
+                <span class="field-label">{{ entry.label }}</span>
+                <code class="field-key">{{ entry.key }}</code>
+              </div>
+
+              <div class="field-control">
+                @if (fieldStates[entry.key]?.editing) {
+                  <!-- Edit mode -->
+                  <div class="edit-row">
+                    <div class="input-wrap">
+                      <input
+                        [type]="fieldStates[entry.key].show ? 'text' : 'password'"
+                        [(ngModel)]="fieldStates[entry.key].value"
+                        [placeholder]="entry.sensitive ? 'Paste new value…' : 'Enter value…'"
+                        class="key-input"
+                        (keydown.enter)="saveField(entry.key)"
+                        (keydown.escape)="cancelEdit(entry.key)"
+                        autofocus
+                      />
+                      @if (entry.sensitive) {
+                        <button class="icon-btn" (click)="toggleShow(entry.key)" [title]="fieldStates[entry.key].show ? 'Hide' : 'Show'">
+                          {{ fieldStates[entry.key].show ? '🙈' : '👁️' }}
+                        </button>
+                      }
+                    </div>
+                    <button class="btn btn-save" (click)="saveField(entry.key)" [disabled]="settingsService.saving()">
+                      Save
+                    </button>
+                    <button class="btn btn-cancel" (click)="cancelEdit(entry.key)">Cancel</button>
+                  </div>
+                } @else {
+                  <!-- Display mode -->
+                  <div class="display-row">
+                    <span class="current-value" [class.unset]="!entry.is_set">
+                      {{ entry.is_set ? entry.masked_value : '— not set —' }}
+                    </span>
+                    <span class="source-badge" [ngClass]="sourceBadgeClass(entry)">
+                      {{ sourceLabel(entry) }}
+                    </span>
+                    <button class="btn btn-edit" (click)="startEdit(entry.key)">
+                      {{ entry.is_set ? 'Update' : 'Set' }}
+                    </button>
+                    @if (entry.source === 'db') {
+                      <button class="btn btn-clear" (click)="clearField(entry.key)" title="Remove DB override">
+                        Clear
+                      </button>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </section>
+    }
+  }
+
+  <div class="encryption-note">
+    <span>🔐</span>
+    <div>
+      <strong>Encryption</strong>
+      <p>
+        API keys are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) using the
+        <code>SETTINGS_SECRET_KEY</code> environment variable before being written to
+        PostgreSQL. Keys stored via <code>.env</code> are read directly from the
+        environment and never persisted to the database.
+      </p>
+      <p>
+        Generate a key:
+        <code>python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</code>
+      </p>
+    </div>
+  </div>
+</div>
