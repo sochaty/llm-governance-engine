@@ -2,95 +2,167 @@
   <header class="main-header">
     <div class="header-content">
       <h1>Governance Insights</h1>
-      <p>Real-time ROI analysis of Cloud vs. Local LLM usage.</p>
+      <p>Real-time ROI analysis · Cloud vs. Local LLM</p>
     </div>
-    <button class="refresh-btn" (click)="loadData()">
-      <span>🔄</span> Update Analytics
-    </button>
+    <button class="refresh-btn" (click)="loadData()">↻ Refresh</button>
   </header>
 
+  <!-- Stats strip -->
+  <div class="stats-strip">
+    <div class="stat-item savings">
+      <span class="stat-label">Credits Saved</span>
+      <span class="stat-value">${{ stats.total_savings | number:'1.4-4' }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Total Audits</span>
+      <span class="stat-value">{{ stats.total_requests }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Avg Cloud Latency</span>
+      <span class="stat-value">{{ stats.avg_cloud_latency }}ms</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Avg Local Latency</span>
+      <span class="stat-value">{{ stats.avg_local_latency }}ms</span>
+    </div>
+  </div>
+
+  <!-- Input area -->
   <section class="input-area">
-    <textarea [(ngModel)]="userPrompt" placeholder="Enter a complex prompt to test ROI..."></textarea>
-    <button class="run-btn" (click)="runBenchmark()" [disabled]="llmService.isStreaming()">
-      {{ llmService.isStreaming() ? 'Analyzing Stream...' : 'Run Benchmark' }}
+    <textarea
+      [(ngModel)]="userPrompt"
+      placeholder="Enter a prompt to benchmark both models simultaneously…"
+      [disabled]="llmService.isStreaming()"
+    ></textarea>
+    <app-model-selector
+      (cloudChanged)="onCloudModelChanged($event)"
+      (localChanged)="onLocalModelChanged($event)"
+    ></app-model-selector>
+    <button class="run-btn" (click)="runBenchmark()" [disabled]="llmService.isStreaming() || !userPrompt()">
+      @if (llmService.isStreaming()) {
+        <span class="spinner"></span> Analyzing…
+      } @else {
+        ▶ Run Benchmark
+      }
     </button>
   </section>
 
+  <!-- Governance violation banners -->
+  @if (cloudViolation()) {
+    <div class="governance-alert">
+      <div class="alert-icon">🛡️</div>
+      <div class="alert-body">
+        <div class="alert-title">
+          Cloud request blocked by governance policy
+          <span class="sev-badge" [ngClass]="severityClass(cloudViolation()!.severity)">
+            {{ cloudViolation()!.severity | uppercase }}
+          </span>
+        </div>
+        <div class="alert-rule">Rule: <strong>{{ cloudViolation()!.rule_name }}</strong></div>
+        <div class="alert-message">{{ cloudViolation()!.message }}</div>
+      </div>
+      <button class="alert-dismiss" (click)="dismissViolation('cloud')">✕</button>
+    </div>
+  }
+
+  @if (localViolation()) {
+    <div class="governance-alert local-alert">
+      <div class="alert-icon">🛡️</div>
+      <div class="alert-body">
+        <div class="alert-title">
+          Local request flagged by governance policy
+          <span class="sev-badge" [ngClass]="severityClass(localViolation()!.severity)">
+            {{ localViolation()!.severity | uppercase }}
+          </span>
+        </div>
+        <div class="alert-rule">Rule: <strong>{{ localViolation()!.rule_name }}</strong></div>
+        <div class="alert-message">{{ localViolation()!.message }}</div>
+      </div>
+      <button class="alert-dismiss" (click)="dismissViolation('local')">✕</button>
+    </div>
+  }
+
+  <!-- Comparison grid -->
   <div class="comparison-grid">
-    <div class="card frontier">
+    <div class="card frontier" [class.streaming]="llmService.isStreaming() && !cloudViolation()">
       <div class="card-header">
-        <h3>Frontier (GPT-4o Cloud)</h3>
-        <span class="status-pill">Cloud</span>
+        <div class="card-title-group">
+          <span class="provider-dot cloud-dot"></span>
+          <h3>{{ cloudCardLabel() }}</h3>
+        </div>
+        <div class="card-meta">
+          @if (llmService.isStreaming() && !cloudViolation()) {
+            <span class="live-badge">● LIVE</span>
+          } @else if (cloudTime() > 0) {
+            <span class="status-pill">{{ cloudTime() }}ms</span>
+          } @else {
+            <span class="status-pill">Cloud</span>
+          }
+        </div>
       </div>
-      <div class="metrics">Latency: {{ cloudTime() }}ms | Est. Cost: ${{ (stats.avg_cloud_cost || 0.03).toFixed(4) }}</div>
-      <div class="content">{{ cloudResponse() }}</div>
+      <div class="metrics">
+        Cost: ${{ (stats.avg_cloud_cost || 0.03) | number:'1.4-4' }}
+        @if (cloudResponse()) { · {{ cloudResponse().split(' ').length }} words }
+      </div>
+      <div class="content" [class.empty-content]="!cloudResponse()">
+        @if (cloudResponse()) {
+          {{ cloudResponse() }}
+          @if (llmService.isStreaming()) { <span class="cursor">▋</span> }
+        } @else if (!llmService.isStreaming()) {
+          <span class="empty-hint">Run a benchmark to see the cloud response here.</span>
+        } @else {
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line short"></div>
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line shorter"></div>
+        }
+      </div>
     </div>
 
-    <div class="card local">
+    <div class="card local" [class.streaming]="llmService.isStreaming() && !localViolation()">
       <div class="card-header">
-        <h3>Local (Llama 3.2 / Ollama)</h3>
-        <span class="status-pill">Edge</span>
+        <div class="card-title-group">
+          <span class="provider-dot local-dot"></span>
+          <h3>{{ localCardLabel() }}</h3>
+        </div>
+        <div class="card-meta">
+          @if (llmService.isStreaming() && !localViolation()) {
+            <span class="live-badge local">● LIVE</span>
+          } @else if (localTime() > 0) {
+            <span class="status-pill">{{ localTime() }}ms · $0.00</span>
+          } @else {
+            <span class="status-pill">Local · Free</span>
+          }
+        </div>
       </div>
-      <div class="metrics">Latency: {{ localTime() }}ms | Cost: $0.00</div>
-      <div class="content">{{ localResponse() }}</div>
+      <div class="metrics">
+        Cost: $0.0000
+        @if (localResponse()) { · {{ localResponse().split(' ').length }} words }
+      </div>
+      <div class="content" [class.empty-content]="!localResponse()">
+        @if (localResponse()) {
+          {{ localResponse() }}
+          @if (llmService.isStreaming()) { <span class="cursor">▋</span> }
+        } @else if (!llmService.isStreaming()) {
+          <span class="empty-hint">Run a benchmark to see the local response here.</span>
+        } @else {
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line short"></div>
+          <div class="skeleton-line shorter"></div>
+        }
+      </div>
     </div>
   </div>
 
-  <div class="stats-grid">
-    <div class="stat-card savings">
-      <small>Total Cloud Credits Saved</small>
-      <p>${{ stats.total_savings }}</p>
-      <div class="progress-bar"><div [style.width]="'100%'"></div></div>
-    </div>
-    <div class="stat-card">
-      <small>Total Governance Audits</small>
-      <p>{{ stats.total_requests }}</p>
-    </div>
-    <div class="stat-card">
-      <small>Local Latency (Avg)</small>
-      <p>{{ stats.avg_local_latency }}ms</p>
-    </div>
-  </div>
-
-  <!-- <section class="history-section">
-    <div class="section-header">
-      <h2>Audit History</h2>
-    </div>
-    <div class="table-wrapper">
-      <table>
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Provider</th>
-            <th>Model</th>
-            <th>Latency</th>
-            <th>Preview</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let entry of history">
-            <td>{{ entry.created_at | date:'shortTime' }}</td>
-            <td><span class="badge" [ngClass]="entry.provider">{{ entry.provider }}</span></td>
-            <td>{{ entry.model_name }}</td>
-            <td>{{ entry.latency_ms }}ms</td>
-            <td class="preview-text">{{ entry.response_preview }}...</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </section> -->
+  <!-- Radar chart -->
   <section class="visualization-area">
-  <div class="section-header">
-    <h2>Performance Comparison Profile</h2>
-    <p>Multi-dimensional analysis of model behavior</p>
-  </div>
-  
-  <div class="chart-wrapper">
-    <canvas baseChart
-  [data]="radarChartData"
-  [options]="radarChartOptions"
-  [type]="'radar'">
-</canvas>
-  </div>
-</section>
+    <div class="section-header">
+      <h2>Performance Comparison Profile</h2>
+      <p>Multi-dimensional analysis of model behaviour</p>
+    </div>
+    <div class="chart-wrapper">
+      <canvas baseChart [data]="radarChartData" [options]="radarChartOptions" [type]="'radar'"></canvas>
+    </div>
+  </section>
 </div>
