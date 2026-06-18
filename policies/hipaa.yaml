@@ -1,0 +1,64 @@
+version: "1.0"
+name: "hipaa"
+
+# HIPAA-aligned governance policy.
+#
+# The Health Insurance Portability and Accountability Act (HIPAA) requires
+# that Protected Health Information (PHI) is not transmitted to third-party
+# systems without a Business Associate Agreement (BAA).
+#
+# This policy blocks ALL cloud model requests where PHI-related PII is
+# detected, regardless of confidence score. It also blocks all requests
+# when the safety score is below 0.6 to account for indirect identifiers.
+#
+# Usage:
+#   GOVERNANCE_POLICY_PATH=policies/hipaa.yaml
+#   or POST /api/v1/policies/reload?path=policies/hipaa.yaml
+
+rules:
+  - id: hipaa-phi-block-cloud
+    name: "HIPAA: Block PHI from cloud models"
+    description: >
+      HIPAA §164.502 prohibits disclosing PHI to business associates
+      without a BAA. Block any prompt containing PII (confidence >= 0.5)
+      from reaching cloud providers. Local models are permitted.
+    condition: pii_detected
+    threshold: 0.5
+    models:
+      - cloud
+      - gpt-4o
+      - gpt-4
+      - gpt-4-turbo
+      - gpt-3.5-turbo
+    action: block
+    severity: critical
+    webhook_url: null
+
+  - id: hipaa-safety-score-block
+    name: "HIPAA: Block low-safety prompts from cloud"
+    description: >
+      A safety score below 0.6 suggests the presence of sensitive content
+      that may include indirect PHI identifiers (age + zip + diagnosis).
+    condition: safety_score_below
+    threshold: 0.6
+    models:
+      - cloud
+      - gpt-4o
+      - gpt-4
+    action: block
+    severity: high
+    webhook_url: null
+
+  - id: hipaa-phi-audit-local
+    name: "HIPAA: Audit PHI on local models"
+    description: >
+      Local model usage with PHI is permitted but must be audited.
+      Alert (without blocking) for compliance traceability.
+    condition: pii_detected
+    threshold: 0.5
+    models:
+      - local
+      - llama3.2:latest
+    action: alert
+    severity: medium
+    webhook_url: null
