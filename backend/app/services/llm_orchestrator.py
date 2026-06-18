@@ -33,7 +33,6 @@ class ModelConfig:
 class LLMOrchestrator:
     def __init__(self) -> None:
         self.audit_service = AuditService()
-        # Default configs from environment — used when no override is supplied
         # Names and timeouts only — API keys are always resolved live from
         # settings_service.get() so UI changes take effect on the next request.
         self.configs: Dict[str, ModelConfig] = {
