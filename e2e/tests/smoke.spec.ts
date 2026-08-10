@@ -29,8 +29,9 @@ test('dashboard renders heading and stats strip', async ({ page }) => {
 test('dashboard shows benchmark input area', async ({ page }) => {
   await page.goto('/dashboard');
 
-  // Textarea for prompt input
-  await expect(page.locator('textarea')).toBeVisible();
+  // Textarea for prompt input (scoped by placeholder — the dashboard also has
+  // a second, optional "context" textarea for RAGAS faithfulness scoring)
+  await expect(page.getByPlaceholder(/Enter a prompt/i)).toBeVisible();
 
   // Run Benchmark button
   await expect(page.locator('button.run-btn')).toBeVisible();
@@ -45,9 +46,14 @@ test('dashboard run button is disabled when prompt is empty', async ({ page }) =
 
 test('dashboard run button enables after typing a prompt', async ({ page }) => {
   await page.goto('/dashboard');
-  await page.locator('textarea').fill('What is the capital of France?');
+  await page.getByPlaceholder(/Enter a prompt/i).fill('What is the capital of France?');
   const runBtn = page.locator('button.run-btn');
   await expect(runBtn).toBeEnabled();
+});
+
+test('dashboard shows optional context input for faithfulness scoring', async ({ page }) => {
+  await page.goto('/dashboard');
+  await expect(page.locator('textarea.context-input')).toBeVisible();
 });
 
 test('dashboard has cloud and local response cards', async ({ page }) => {
