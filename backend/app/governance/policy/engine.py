@@ -108,6 +108,19 @@ class DefaultPolicyEngine:
                 )
             return False, ""
 
+        if condition == PolicyCondition.FAITHFULNESS_SCORE_BELOW:
+            if ctx.faithfulness_score is None:
+                # Not yet known (pre-response pass) — never fires here.
+                return False, ""
+            limit = threshold if threshold is not None else 0.5
+            if ctx.faithfulness_score < limit:
+                return (
+                    True,
+                    f"Faithfulness score {ctx.faithfulness_score:.2f} is below "
+                    f"threshold {limit:.2f} — response may be hallucinated",
+                )
+            return False, ""
+
         if condition == PolicyCondition.MODEL_IS:
             # The model filter is already handled above; this condition
             # fires whenever the model filter matches.

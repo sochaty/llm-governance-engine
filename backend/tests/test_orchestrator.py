@@ -3,6 +3,8 @@ import pytest
 import time
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.llm_orchestrator import LLMOrchestrator, ModelConfig
+from app.governance.policy.engine import DefaultPolicyEngine
+from app.governance.policy.schema import GovernancePolicy, PolicyCondition, PolicyRule
 
 @pytest.mark.anyio
 class TestOrchestratorBenchmarks:
@@ -115,6 +117,160 @@ class TestOrchestratorBenchmarks:
             
             added_result = db_session.add.call_args[0][0]
             assert added_result.latency_ms >= 100 # Verify latency is recorded
+
+    # --- 6. Faithfulness scoring is opt-in via `context` ---
+    async def test_no_context_skips_faithfulness_scoring(self):
+        """Without `context`, faithfulness fields stay None and the judge is never called."""
+        orchestrator = LLMOrchestrator()
+        db_session = AsyncMock()
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+        orchestrator.faithfulness_service.score = AsyncMock(return_value=(0.9, 0.8))
+
+        async def mock_stream_yield(*args):
+            yield "response"
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_yield):
+            async for _ in orchestrator.run_and_record_benchmark(db_session, "test", "cloud"):
+                pass
+
+        orchestrator.faithfulness_service.score.assert_not_called()
+        added_result = db_session.add.call_args[0][0]
+        assert added_result.faithfulness_score is None
+        assert added_result.context_utilization is None
+
+    async def test_context_provided_triggers_faithfulness_scoring(self):
+        """When `context` is supplied, the response is scored and persisted."""
+        orchestrator = LLMOrchestrator()
+        db_session = AsyncMock()
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+        orchestrator.faithfulness_service.score = AsyncMock(return_value=(0.72, 0.65))
+
+        async def mock_stream_yield(*args):
+            yield "Paris is the capital of France."
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_yield):
+            async for _ in orchestrator.run_and_record_benchmark(
+                db_session, "What is the capital?", "cloud", context="Paris is the capital of France."
+            ):
+                pass
+
+        orchestrator.faithfulness_service.score.assert_awaited_once()
+        added_result = db_session.add.call_args[0][0]
+        assert added_result.faithfulness_score == 0.72
+        assert added_result.context_utilization == 0.65
+
+    async def test_low_faithfulness_triggers_post_response_policy_check(self):
+        """A faithfulness_score_below rule fires the post-response governance check."""
+        orchestrator = LLMOrchestrator()
+        db_session = AsyncMock()
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+        orchestrator.faithfulness_service.score = AsyncMock(return_value=(0.1, 0.2))
+
+        rule = PolicyRule(
+            id="low-faithfulness",
+            name="Low Faithfulness",
+            condition=PolicyCondition.FAITHFULNESS_SCORE_BELOW,
+            threshold=0.6,
+            action="warn",
+            severity="medium",
+        )
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="test", rules=[rule]))
+
+        async def mock_stream_yield(*args):
+            yield "hallucinated response"
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_yield), \
+             patch("app.services.llm_orchestrator.get_policy_engine", return_value=engine), \
+             patch("app.services.llm_orchestrator.record_violations", new_callable=AsyncMock) as mock_record:
+            async for _ in orchestrator.run_and_record_benchmark(
+                db_session, "test", "cloud", context="some context"
+            ):
+                pass
+
+        mock_record.assert_awaited_once()
+        _, verdict, gov_ctx, _engine = mock_record.call_args.args
+        assert len(verdict.violated_rules) == 1
+        assert gov_ctx.faithfulness_score == 0.1
+        assert mock_record.call_args.kwargs.get("post_response") is True
+
+    async def test_high_faithfulness_does_not_trigger_policy_check(self):
+        """A faithfulness score above every rule's threshold records no violation."""
+        orchestrator = LLMOrchestrator()
+        db_session = AsyncMock()
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+        orchestrator.faithfulness_service.score = AsyncMock(return_value=(0.95, 0.9))
+
+        rule = PolicyRule(
+            id="low-faithfulness",
+            name="Low Faithfulness",
+            condition=PolicyCondition.FAITHFULNESS_SCORE_BELOW,
+            threshold=0.6,
+            action="warn",
+            severity="medium",
+        )
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="test", rules=[rule]))
+
+        async def mock_stream_yield(*args):
+            yield "faithful response"
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_yield), \
+             patch("app.services.llm_orchestrator.get_policy_engine", return_value=engine), \
+             patch("app.services.llm_orchestrator.record_violations", new_callable=AsyncMock) as mock_record:
+            async for _ in orchestrator.run_and_record_benchmark(
+                db_session, "test", "cloud", context="some context"
+            ):
+                pass
+
+        mock_record.assert_not_awaited()
+
+    async def test_no_faithfulness_rules_configured_skips_check_entirely(self):
+        """No faithfulness_score_below rule in the policy → no evaluation attempted."""
+        orchestrator = LLMOrchestrator()
+        db_session = AsyncMock()
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+        orchestrator.faithfulness_service.score = AsyncMock(return_value=(0.1, 0.2))
+
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="test", rules=[]))
+
+        async def mock_stream_yield(*args):
+            yield "response"
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_yield), \
+             patch("app.services.llm_orchestrator.get_policy_engine", return_value=engine), \
+             patch("app.services.llm_orchestrator.record_violations", new_callable=AsyncMock) as mock_record:
+            async for _ in orchestrator.run_and_record_benchmark(
+                db_session, "test", "cloud", context="some context"
+            ):
+                pass
+
+        mock_record.assert_not_awaited()
+
+    async def test_post_response_policy_check_failure_does_not_crash_stream(self):
+        """An exception evaluating the post-response policy is caught, not propagated."""
+        orchestrator = LLMOrchestrator()
+        db_session = AsyncMock()
+        orchestrator.audit_service.scan_for_pii = MagicMock(return_value=False)
+        orchestrator.audit_service.calculate_safety_score = MagicMock(return_value=1.0)
+        orchestrator.faithfulness_service.score = AsyncMock(return_value=(0.1, 0.2))
+
+        async def mock_stream_yield(*args):
+            yield "response"
+
+        with patch.object(orchestrator, "get_streaming_response", side_effect=mock_stream_yield), \
+             patch("app.services.llm_orchestrator.get_policy_engine", side_effect=RuntimeError("boom")):
+            responses = []
+            async for chunk in orchestrator.run_and_record_benchmark(
+                db_session, "test", "cloud", context="some context"
+            ):
+                responses.append(chunk)
+
+        assert "response" in responses
+        db_session.commit.assert_awaited_once()  # benchmark row still saved
 
 
 @pytest.mark.anyio

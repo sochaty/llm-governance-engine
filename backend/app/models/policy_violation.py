@@ -25,4 +25,5 @@ class PolicyViolation(Base):
     model_id = Column(String, nullable=True)
     pii_detected = Column(Integer, default=0)  # stored as 0/1 for broad DB compat
     safety_score = Column(Float, nullable=True)
+    faithfulness_score = Column(Float, nullable=True)  # set only for post-response violations
     webhook_status = Column(String, nullable=True)  # "sent" | "failed" | "not_configured"

@@ -16,13 +16,13 @@ class TestMainAPI:
     # --- 2. Benchmark Streaming (Validation) ---
     async def test_stream_llm_validation_error(self, client):
         """Test that missing prompt returns 422 Unprocessable Entity."""
-        response = await client.get("/api/benchmark/stream") # No prompt param
+        response = await client.post("/api/benchmark/stream", json={}) # No prompt field
         assert response.status_code == 422
 
     async def test_stream_llm_invalid_provider(self, client):
         """Test that invalid provider regex/pattern triggers 422."""
-        params = {"prompt": "test", "provider": "invalid-ai"}
-        response = await client.get("/api/benchmark/stream", params=params)
+        body = {"prompt": "test", "provider": "invalid-ai"}
+        response = await client.post("/api/benchmark/stream", json=body)
         assert response.status_code == 422
 
     # --- 3. History & Stats (Database Routes) ---

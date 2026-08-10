@@ -10,6 +10,11 @@ name: "default"
 #   safety_score_below  — fires when the computed safety score is below `threshold`
 #   cost_exceeds        — fires when estimated per-request cost exceeds `threshold` USD
 #   model_is            — fires whenever the request targets a model in `models`
+#   faithfulness_score_below — fires when RAGAS faithfulness (only computed when
+#                              the request supplied `context`) is below `threshold`.
+#                              Evaluated post-response — a `block` action here is
+#                              recorded as `alert` instead since the response has
+#                              already streamed to the client by the time it's known.
 #
 # Supported actions:  block | warn | alert
 # Supported severity: low | medium | high | critical
@@ -54,4 +59,16 @@ rules:
       - llama3.2:latest
     action: alert
     severity: high
+    webhook_url: null
+
+  - id: low-faithfulness-warn
+    name: "Low Faithfulness / Possible Hallucination"
+    description: >
+      Warns when a response's RAGAS faithfulness score against the supplied
+      retrieved context is below 0.6 — the response may contain claims not
+      grounded in the provided context.
+    condition: faithfulness_score_below
+    threshold: 0.6
+    action: warn
+    severity: medium
     webhook_url: null

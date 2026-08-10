@@ -5,6 +5,7 @@ import { environment } from '@env/environment';
 import { CommonModule } from '@angular/common';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { BenchmarkResult } from '../../core/models/benchmark-result';
 
 @Component({
   selector: 'app-history',
@@ -14,11 +15,11 @@ import autoTable from 'jspdf-autotable';
 })
 export class HistoryComponent implements OnInit{
   private http = inject(HttpClient);
-  
-  allHistory = signal<any[]>([]);
-  filteredHistory = signal<any[]>([]);
+
+  allHistory = signal<BenchmarkResult[]>([]);
+  filteredHistory = signal<BenchmarkResult[]>([]);
   searchTerm = '';
-  
+
   // Pagination
   currentPage = 1;
   pageSize = 10;
@@ -27,7 +28,7 @@ export class HistoryComponent implements OnInit{
   }
 
   loadHistory() {
-    this.http.get<any[]>(`${environment.apiUrl}/benchmark/history`).subscribe(data => {
+    this.http.get<BenchmarkResult[]>(`${environment.apiUrl}/benchmark/history`).subscribe(data => {
       this.allHistory.set(data);
       this.applyFilter();
     });
@@ -53,7 +54,7 @@ export class HistoryComponent implements OnInit{
     return Math.ceil(this.filteredHistory().length / this.pageSize);
   }
 
-  exportToPDF(record: any) {
+  exportToPDF(record: BenchmarkResult) {
     console.log('Exporting record:', record.id);
     const doc = new jsPDF();
   const timestamp = new Date(record.created_at).toLocaleString();
@@ -80,6 +81,14 @@ export class HistoryComponent implements OnInit{
       ['Cost', `$${record.estimated_cost?.toFixed(4) || '0.0000'}`],
       ['PII Detected', record.pii_detected ? '⚠️ YES' : 'SAFE'],
       ['Safety Score', `${(record.safety_score ?? 1.0) * 100}%`],
+      [
+        'Faithfulness Score',
+        record.faithfulness_score != null ? `${(record.faithfulness_score * 100).toFixed(0)}%` : 'N/A (no context supplied)',
+      ],
+      [
+        'Context Utilization',
+        record.context_utilization != null ? `${(record.context_utilization * 100).toFixed(0)}%` : 'N/A (no context supplied)',
+      ],
     ],
     theme: 'striped',
     headStyles: { fillColor: [30, 41, 59] } // Your card color (#1e293b)
@@ -102,7 +111,7 @@ export class HistoryComponent implements OnInit{
   doc.text('Model Response:', 14, responseY);
   
   doc.setFontSize(10);
-  const splitResponse = doc.splitTextToSize(record.response_preview, 180);
+  const splitResponse = doc.splitTextToSize(record.response_preview ?? '', 180);
   doc.text(splitResponse, 14, responseY + 7);
 
   // 5. Save the PDF

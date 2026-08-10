@@ -34,6 +34,12 @@
       placeholder="Enter a prompt to benchmark both models simultaneously…"
       [disabled]="llmService.isStreaming()"
     ></textarea>
+    <textarea
+      class="context-input"
+      [(ngModel)]="userContext"
+      placeholder="Optional: paste retrieved context/passages here to score response faithfulness (RAGAS)…"
+      [disabled]="llmService.isStreaming()"
+    ></textarea>
     <app-model-selector
       (cloudChanged)="onCloudModelChanged($event)"
       (localChanged)="onLocalModelChanged($event)"
