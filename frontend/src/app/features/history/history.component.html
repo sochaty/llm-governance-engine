@@ -29,6 +29,8 @@
             <th>Provider</th>
             <th>Prompt Preview</th>
             <th>Security Status</th>
+            <th>Faithfulness</th>
+            <th>Context Util.</th>
             <th>Latency</th>
             <th>Actions</th>
           </tr>
@@ -49,6 +51,22 @@
                 <span class="status-indicator">●</span>
                 {{ audit.pii_detected ? 'PII Detected' : 'Secure' }}
               </div>
+            </td>
+            <td>
+              @if (audit.faithfulness_score != null) {
+                <span class="security-tag" [ngClass]="audit.faithfulness_score < 0.6 ? 'leak' : 'secure'">
+                  {{ audit.faithfulness_score * 100 | number:'1.0-0' }}%
+                </span>
+              } @else {
+                <span class="preview-text">—</span>
+              }
+            </td>
+            <td>
+              @if (audit.context_utilization != null) {
+                {{ audit.context_utilization * 100 | number:'1.0-0' }}%
+              } @else {
+                <span class="preview-text">—</span>
+              }
             </td>
             <td class="timestamp">{{ audit.latency_ms }}ms</td>
             <td>

@@ -26,14 +26,25 @@ export class LlmService {
     provider: 'cloud' | 'local',
     providerType?: string,
     modelId?: string,
+    context?: string,
   ) {
     this.isStreaming.set(true);
 
     try {
-      let url = `${environment.apiUrl}/benchmark/stream?prompt=${encodeURIComponent(prompt)}&provider=${provider}`;
-      if (providerType) url += `&provider_type=${encodeURIComponent(providerType)}`;
-      if (modelId) url += `&model_id=${encodeURIComponent(modelId)}`;
-      const response = await fetch(url);
+      // POST + JSON body (rather than GET + query params) so an optional,
+      // potentially long `context` (retrieved RAG passages, for faithfulness
+      // scoring) isn't subject to URL length limits.
+      const response = await fetch(`${environment.apiUrl}/benchmark/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          provider,
+          provider_type: providerType || null,
+          model_id: modelId || null,
+          context: context || null,
+        }),
+      });
 
       if (response.status === 403) {
         const body = await response.json();

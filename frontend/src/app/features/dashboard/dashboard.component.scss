@@ -92,6 +92,12 @@
     &:disabled { opacity: 0.5; }
   }
 
+  .context-input {
+    min-height: 56px;
+    font-size: 0.85rem;
+    opacity: 0.9;
+  }
+
   .run-btn {
     background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
     color: #0f172a;

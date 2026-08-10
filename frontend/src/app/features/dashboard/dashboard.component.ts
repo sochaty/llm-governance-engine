@@ -7,6 +7,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '@env/environment';
 import { LlmService, GovernanceBlockedError, GovernanceViolation } from '../../core/services/llm.service';
 import { ModelSelectorComponent, CloudSelection, LocalSelection } from '../model-selector/model-selector.component';
+import { BenchmarkResult } from '../../core/models/benchmark-result';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
 
@@ -29,8 +30,9 @@ export class DashboardComponent implements OnInit {
     avg_cloud_cost: 0
   };
 
-  history: any[] = [];
+  history: BenchmarkResult[] = [];
   userPrompt = signal('');
+  userContext = signal('');
 
   cloudResponse = signal('');
   localResponse = signal('');
@@ -100,7 +102,7 @@ export class DashboardComponent implements OnInit {
     this.http.get<any>(`${environment.apiUrl}/benchmark/stats`).subscribe(data => {
       this.stats = { ...this.stats, ...data };
     });
-    this.http.get<any[]>(`${environment.apiUrl}/benchmark/history`).subscribe(data => {
+    this.http.get<BenchmarkResult[]>(`${environment.apiUrl}/benchmark/history`).subscribe(data => {
       this.history = data;
       this.updateRadarChart();
     });
@@ -120,15 +122,16 @@ export class DashboardComponent implements OnInit {
 
     const cloudSel = this.cloudSelection();
     const localSel = this.localSelection();
+    const context = this.userContext() || undefined;
 
     await Promise.all([
       this.consumeStream(
         prompt, 'cloud', this.cloudResponse, this.cloudTime, this.cloudViolation,
-        cloudSel?.provider_type, cloudSel?.model_id,
+        cloudSel?.provider_type, cloudSel?.model_id, context,
       ),
       this.consumeStream(
         prompt, 'local', this.localResponse, this.localTime, this.localViolation,
-        localSel ? 'ollama' : undefined, localSel?.model_id,
+        localSel ? 'ollama' : undefined, localSel?.model_id, context,
       ),
     ]);
 
@@ -167,10 +170,11 @@ export class DashboardComponent implements OnInit {
     violationSignal: any,
     providerType?: string,
     modelId?: string,
+    context?: string,
   ) {
     const start = performance.now();
     try {
-      const stream = this.llmService.getLlmStream(prompt, provider, providerType, modelId);
+      const stream = this.llmService.getLlmStream(prompt, provider, providerType, modelId, context);
       for await (const token of stream) {
         targetSignal.update((val: string) => val + token);
       }
@@ -200,7 +204,7 @@ export class DashboardComponent implements OnInit {
         (cloud.safety_score ?? 0.98) * 100,
         (cloud.pii_detected ? 20 : 100),
         (cloud.faithfulness_score ?? 0.95) * 100,
-        cloud.context_utilization ?? 85,
+        (cloud.context_utilization ?? 0.85) * 100,
         90,
         60,
         95
@@ -215,7 +219,7 @@ export class DashboardComponent implements OnInit {
         (local.safety_score ?? 0.90) * 100,
         100,
         (local.faithfulness_score ?? 0.85) * 100,
-        local.context_utilization ?? 30,
+        (local.context_utilization ?? 0.30) * 100,
         this.normalize(local.gpu_mem_usage || 2000, 8000, true),
         95,
         85

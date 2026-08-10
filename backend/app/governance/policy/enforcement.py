@@ -14,19 +14,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated, Optional
+from typing import Optional
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.policy_violation import PolicyViolation
+from app.schemas.benchmark import BenchmarkRequest
 from app.services.audit_service import AuditService
 
 from .engine import DefaultPolicyEngine
 from .loader import PolicyLoader
 from .schema import GovernanceContext, PolicyVerdict, ViolatedRule
 from .webhook import WebhookDelivery, WebhookEvent
+
+# Actions that are still meaningful once the LLM response has already started
+# streaming — a "block" verdict can no longer stop delivery post-response, so
+# it is recorded as an alert instead (see record_violations()).
+_POST_RESPONSE_ACTION_DOWNGRADE = {"block": "alert"}
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +85,22 @@ async def _record_violation(
     violation: ViolatedRule,
     context: GovernanceContext,
     webhook_url: str | None,
+    *,
+    post_response: bool = False,
 ) -> None:
+    action = violation.action
+    if post_response and action in _POST_RESPONSE_ACTION_DOWNGRADE:
+        logger.warning(
+            "Rule '%s' fired post-response with action=%s, which can no longer "
+            "block an in-flight stream — recording as '%s' instead.",
+            violation.rule_id, action, _POST_RESPONSE_ACTION_DOWNGRADE[action],
+        )
+        action = _POST_RESPONSE_ACTION_DOWNGRADE[action]
+
     row = PolicyViolation(
         rule_id=violation.rule_id,
         rule_name=violation.rule_name,
-        action=violation.action,
+        action=action,
         severity=violation.severity,
         message=violation.message,
         prompt_preview=context.prompt[:200],
@@ -91,6 +108,7 @@ async def _record_violation(
         model_id=context.model_id,
         pii_detected=int(context.pii_detected),
         safety_score=context.safety_score,
+        faithfulness_score=context.faithfulness_score,
         webhook_status=None,
     )
 
@@ -99,7 +117,7 @@ async def _record_violation(
             rule_id=violation.rule_id,
             rule_name=violation.rule_name,
             severity=violation.severity,
-            action=violation.action,
+            action=action,
             message=violation.message,
             provider=context.provider,
             model_id=context.model_id,
@@ -116,6 +134,29 @@ async def _record_violation(
         logger.error("Failed to persist policy violation: %s", exc)
 
 
+async def record_violations(
+    db: AsyncSession,
+    verdict: PolicyVerdict,
+    context: GovernanceContext,
+    engine: DefaultPolicyEngine,
+    *,
+    post_response: bool = False,
+) -> None:
+    """Persist every violation in `verdict` and fire its webhook (if configured).
+
+    Shared by the pre-response `enforce_governance_policy` dependency and any
+    post-response check (e.g. faithfulness scoring in llm_orchestrator, where
+    `post_response=True` downgrades a `block` action to `alert` since the
+    response has already started streaming).
+    """
+    for violation in verdict.violated_rules:
+        webhook_url = next(
+            (r.webhook_url for r in engine.policy.rules if r.id == violation.rule_id),
+            None,
+        )
+        await _record_violation(db, violation, context, webhook_url, post_response=post_response)
+
+
 async def _deliver_webhook(
     row: PolicyViolation, event: WebhookEvent, webhook_url: str
 ) -> None:
@@ -127,17 +168,21 @@ async def _deliver_webhook(
 # FastAPI dependency
 # ---------------------------------------------------------------------------
 async def enforce_governance_policy(
-    prompt: Annotated[str, Query(min_length=1)],
-    provider: Annotated[str, Query(pattern="^(cloud|local)$")] = "cloud",
+    body: BenchmarkRequest,
     db: AsyncSession = Depends(get_db),
 ) -> PolicyVerdict:
     """
     FastAPI dependency injected into the /benchmark/stream endpoint.
     Returns the PolicyVerdict so the endpoint can log warnings.
     Raises HTTP 403 if a blocking rule fires.
+
+    `body` is the same BenchmarkRequest model the endpoint itself declares —
+    FastAPI resolves both to the single parsed request body rather than
+    treating each occurrence as a separate nested field.
     """
     engine = get_policy_engine()
     audit = _get_audit_service()
+    prompt, provider = body.prompt, body.provider
 
     # Scan prompt for PII before it touches any model.
     scan = audit.scan_for_pii_details(prompt)
@@ -165,12 +210,7 @@ async def enforce_governance_policy(
     verdict = engine.evaluate(context)
 
     # Persist all violations and trigger webhooks (fire-and-forget).
-    for violation in verdict.violated_rules:
-        webhook_url = next(
-            (r.webhook_url for r in engine.policy.rules if r.id == violation.rule_id),
-            None,
-        )
-        await _record_violation(db, violation, context, webhook_url)
+    await record_violations(db, verdict, context, engine)
 
     if not verdict.passed and verdict.blocking_rule:
         br = verdict.blocking_rule

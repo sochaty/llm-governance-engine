@@ -12,8 +12,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.governance.policy.engine import DefaultPolicyEngine
+from app.governance.policy.enforcement import get_policy_engine, record_violations
+from app.governance.policy.schema import GovernanceContext, GovernancePolicy, PolicyCondition
 from app.models.benchmark import BenchmarkResult
 from app.services.audit_service import AuditService
+from app.services.faithfulness_service import FaithfulnessService
 from app.services.model_registry import CLOUD_PROVIDERS, cost_per_word
 from app.services.settings_service import settings_service
 
@@ -33,6 +37,7 @@ class ModelConfig:
 class LLMOrchestrator:
     def __init__(self) -> None:
         self.audit_service = AuditService()
+        self.faithfulness_service = FaithfulnessService()
         # Names and timeouts only — API keys are always resolved live from
         # settings_service.get() so UI changes take effect on the next request.
         self.configs: Dict[str, ModelConfig] = {
@@ -176,6 +181,7 @@ class LLMOrchestrator:
         provider: str,
         provider_type: Optional[str] = None,
         model_id: Optional[str] = None,
+        context: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         start_time = time.time()
         full_content = ""
@@ -195,6 +201,15 @@ class LLMOrchestrator:
             pii_detected = bool(pii_in_prompt or pii_in_content)
             safety_score = self.audit_service.calculate_safety_score(full_content or prompt)
 
+            # Opt-in: only scored when the caller supplied retrieved context,
+            # so plain prompt-only runs never pay the judge-model latency/cost.
+            faithfulness_score: Optional[float] = None
+            context_utilization: Optional[float] = None
+            if context:
+                faithfulness_score, context_utilization = await self.faithfulness_service.score(
+                    prompt, full_content, context
+                )
+
             word_count = len(full_content.split())
             estimated_cost = cost_per_word(config.name, provider) * word_count
 
@@ -207,15 +222,71 @@ class LLMOrchestrator:
                 response_preview=full_content[:200],
                 pii_detected=pii_detected,
                 safety_score=safety_score,
+                faithfulness_score=faithfulness_score,
+                context_utilization=context_utilization,
                 version_tag=f"{config.provider_type}/{config.name}",
             )
 
             db.add(new_result)
             await db.commit()
             logger.info(
-                "Benchmark saved | provider=%s type=%s model=%s | PII=%s safety=%.2f",
+                "Benchmark saved | provider=%s type=%s model=%s | PII=%s safety=%.2f faithfulness=%s",
                 provider, config.provider_type, config.name, pii_detected, safety_score,
+                faithfulness_score,
             )
+
+            if faithfulness_score is not None:
+                await self._check_faithfulness_policy(
+                    db, prompt, provider, config.name, faithfulness_score
+                )
 
         except Exception as exc:
             logger.error("Failed to record benchmark: %s", exc)
+
+    async def _check_faithfulness_policy(
+        self,
+        db: AsyncSession,
+        prompt: str,
+        provider: str,
+        model_id: str,
+        faithfulness_score: float,
+    ) -> None:
+        """Post-response governance check — faithfulness is only known after the
+        response has streamed back, so this runs after the fact (warn/alert
+        only; see record_violations' post_response downgrade)."""
+        try:
+            engine = get_policy_engine()
+            # Only re-evaluate faithfulness rules here — other conditions
+            # (PII, safety, cost, model_is) were already fully evaluated
+            # pre-response with real data; re-running them here against
+            # placeholder values would spuriously re-fire them.
+            faithfulness_rules = [
+                r for r in engine.policy.rules
+                if r.condition == PolicyCondition.FAITHFULNESS_SCORE_BELOW
+            ]
+            if not faithfulness_rules:
+                return
+
+            faithfulness_policy = GovernancePolicy(
+                version=engine.policy.version, name=engine.policy.name, rules=faithfulness_rules
+            )
+            faithfulness_engine = DefaultPolicyEngine(faithfulness_policy)
+
+            gov_context = GovernanceContext(
+                prompt=prompt,
+                provider=provider,
+                model_id=model_id,
+                pii_detected=False,
+                pii_entity_types=[],
+                pii_max_confidence=0.0,
+                safety_score=1.0,
+                estimated_prompt_cost_usd=0.0,
+                faithfulness_score=faithfulness_score,
+            )
+            verdict = faithfulness_engine.evaluate(gov_context)
+            if verdict.violated_rules:
+                await record_violations(
+                    db, verdict, gov_context, faithfulness_engine, post_response=True
+                )
+        except Exception as exc:
+            logger.error("Post-response faithfulness policy check failed: %s", exc)

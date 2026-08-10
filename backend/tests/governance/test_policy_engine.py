@@ -64,6 +64,17 @@ def _safety_rule(threshold=0.5, action="warn") -> PolicyRule:
     )
 
 
+def _faithfulness_rule(threshold=0.6, action="warn") -> PolicyRule:
+    return PolicyRule(
+        id="test-faithfulness",
+        name="Test Faithfulness Rule",
+        condition=PolicyCondition.FAITHFULNESS_SCORE_BELOW,
+        threshold=threshold,
+        action=action,
+        severity="medium",
+    )
+
+
 def _cost_rule(threshold=1.0, action="block") -> PolicyRule:
     return PolicyRule(
         id="test-cost",
@@ -209,6 +220,46 @@ class TestCostRule:
         ctx = _clean_context(estimated_prompt_cost_usd=0.10)
         verdict = engine.evaluate(ctx)
         assert verdict.passed is True  # not strictly greater
+
+
+# ---------------------------------------------------------------------------
+# Tests: faithfulness score rule (post-response only)
+# ---------------------------------------------------------------------------
+
+class TestFaithfulnessScoreRule:
+    def test_does_not_fire_when_faithfulness_score_is_none(self):
+        """Pre-response contexts never have a faithfulness_score — must never fire."""
+        engine = _make_engine(_faithfulness_rule(threshold=0.6, action="warn"))
+        ctx = _clean_context(faithfulness_score=None)
+        verdict = engine.evaluate(ctx)
+        assert verdict.passed is True
+        assert verdict.violated_rules == []
+
+    def test_warn_fires_below_threshold(self):
+        engine = _make_engine(_faithfulness_rule(threshold=0.6, action="warn"))
+        ctx = _clean_context(faithfulness_score=0.4)
+        verdict = engine.evaluate(ctx)
+        assert verdict.passed is True  # warn does not block
+        assert len(verdict.violated_rules) == 1
+        assert "0.40" in verdict.violated_rules[0].message
+
+    def test_block_fires_below_threshold(self):
+        engine = _make_engine(_faithfulness_rule(threshold=0.6, action="block"))
+        ctx = _clean_context(faithfulness_score=0.1)
+        verdict = engine.evaluate(ctx)
+        assert verdict.passed is False
+
+    def test_does_not_fire_at_exact_threshold(self):
+        engine = _make_engine(_faithfulness_rule(threshold=0.6, action="warn"))
+        ctx = _clean_context(faithfulness_score=0.6)
+        verdict = engine.evaluate(ctx)
+        assert verdict.violated_rules == []
+
+    def test_does_not_fire_above_threshold(self):
+        engine = _make_engine(_faithfulness_rule(threshold=0.6, action="warn"))
+        ctx = _clean_context(faithfulness_score=0.9)
+        verdict = engine.evaluate(ctx)
+        assert verdict.violated_rules == []
 
 
 # ---------------------------------------------------------------------------

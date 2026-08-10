@@ -5,12 +5,14 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.governance.policy.engine import DefaultPolicyEngine
 from app.governance.policy.loader import PolicyLoader
-from app.governance.policy.schema import GovernancePolicy, PolicyRule
+from app.governance.policy.schema import GovernanceContext, GovernancePolicy, PolicyRule
 from app.governance.policy.enforcement import (
     get_policy_engine,
     reload_policy_engine,
     reset_policy_engine,
+    record_violations,
     _get_audit_service,
 )
 
@@ -133,20 +135,20 @@ class TestEnforcementIntegration:
             yield "safe response token"
 
         with patch.object(br._orchestrator, "run_and_record_benchmark", side_effect=mock_stream):
-            response = await client.get(
+            response = await client.post(
                 "/api/benchmark/stream",
-                params={"prompt": "What is the capital of France?", "provider": "cloud"},
+                json={"prompt": "What is the capital of France?", "provider": "cloud"},
             )
         assert response.status_code == 200
 
     async def test_validation_error_without_prompt(self, client):
-        response = await client.get("/api/benchmark/stream")
+        response = await client.post("/api/benchmark/stream", json={})
         assert response.status_code == 422
 
     async def test_invalid_provider_rejected(self, client):
-        response = await client.get(
+        response = await client.post(
             "/api/benchmark/stream",
-            params={"prompt": "test", "provider": "badprovider"},
+            json={"prompt": "test", "provider": "badprovider"},
         )
         assert response.status_code == 422
 
@@ -173,9 +175,9 @@ rules:
         import app.governance.policy.enforcement as enf
         enf._policy_engine = DefaultPolicyEngine(blocking_policy)
 
-        response = await client.get(
+        response = await client.post(
             "/api/benchmark/stream",
-            params={"prompt": "My SSN is 123-45-6789", "provider": "cloud"},
+            json={"prompt": "My SSN is 123-45-6789", "provider": "cloud"},
         )
         # Should be blocked (403) or pass (200) depending on PII detection confidence
         assert response.status_code in (200, 403)
@@ -208,11 +210,100 @@ rules:
             yield "warned response"
 
         with patch.object(br._orchestrator, "run_and_record_benchmark", side_effect=mock_stream):
-            response = await client.get(
+            response = await client.post(
                 "/api/benchmark/stream",
-                params={"prompt": "Hello world", "provider": "cloud"},
+                json={"prompt": "Hello world", "provider": "cloud"},
             )
         assert response.status_code == 200
+
+
+# ── record_violations() — shared persistence helper ───────────────────────────
+
+def _rule(action="warn", rule_id="r1") -> PolicyRule:
+    from app.governance.policy.schema import PolicyCondition
+
+    return PolicyRule(
+        id=rule_id,
+        name="Test Rule",
+        condition=PolicyCondition.FAITHFULNESS_SCORE_BELOW,
+        threshold=0.6,
+        action=action,
+        severity="medium",
+    )
+
+
+def _gov_context(**overrides) -> GovernanceContext:
+    defaults = dict(
+        prompt="test prompt",
+        provider="cloud",
+        model_id="gpt-4o",
+        pii_detected=False,
+        pii_entity_types=[],
+        pii_max_confidence=0.0,
+        safety_score=1.0,
+        estimated_prompt_cost_usd=0.0,
+    )
+    defaults.update(overrides)
+    return GovernanceContext(**defaults)
+
+
+@pytest.mark.anyio
+class TestRecordViolations:
+    def setup_method(self):
+        reset_policy_engine()
+
+    async def test_persists_violation_row(self):
+        db = AsyncMock()
+        rule = _rule(action="warn")
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="t", rules=[rule]))
+        ctx = _gov_context(faithfulness_score=0.2)
+        verdict = engine.evaluate(ctx)
+
+        await record_violations(db, verdict, ctx, engine)
+
+        db.add.assert_called_once()
+        row = db.add.call_args[0][0]
+        assert row.rule_id == "r1"
+        assert row.action == "warn"
+        assert row.faithfulness_score == 0.2
+        db.commit.assert_awaited_once()
+
+    async def test_post_response_downgrades_block_to_alert(self):
+        """A block action fired post-response can't stop an in-flight stream,
+        so it's persisted as an alert instead."""
+        db = AsyncMock()
+        rule = _rule(action="block")
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="t", rules=[rule]))
+        ctx = _gov_context(faithfulness_score=0.1)
+        verdict = engine.evaluate(ctx)
+
+        await record_violations(db, verdict, ctx, engine, post_response=True)
+
+        row = db.add.call_args[0][0]
+        assert row.action == "alert"
+
+    async def test_pre_response_keeps_block_action(self):
+        """Without post_response=True, a block action is persisted as-is."""
+        db = AsyncMock()
+        rule = _rule(action="block")
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="t", rules=[rule]))
+        ctx = _gov_context(faithfulness_score=0.1)
+        verdict = engine.evaluate(ctx)
+
+        await record_violations(db, verdict, ctx, engine)
+
+        row = db.add.call_args[0][0]
+        assert row.action == "block"
+
+    async def test_no_violations_does_nothing(self):
+        db = AsyncMock()
+        engine = DefaultPolicyEngine(GovernancePolicy(version="1.0", name="t", rules=[]))
+        ctx = _gov_context()
+        verdict = engine.evaluate(ctx)
+
+        await record_violations(db, verdict, ctx, engine)
+
+        db.add.assert_not_called()
 
 
 # ── Governance router endpoints ────────────────────────────────────────────────

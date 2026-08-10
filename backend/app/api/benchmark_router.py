@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +9,7 @@ from app.core.database import get_db
 from app.governance.policy.enforcement import enforce_governance_policy
 from app.governance.policy.schema import PolicyVerdict
 from app.models.benchmark import BenchmarkResult
+from app.schemas.benchmark import BenchmarkRequest
 from app.services.llm_orchestrator import LLMOrchestrator
 
 router = APIRouter(prefix="/benchmark", tags=["benchmark"])
@@ -18,12 +17,9 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 _orchestrator = LLMOrchestrator()
 
 
-@router.get("/stream")
+@router.post("/stream")
 async def stream_llm(
-    prompt: str = Query(..., min_length=1),
-    provider: str = Query("cloud", pattern="^(cloud|local)$"),
-    provider_type: Optional[str] = Query(None, description="openai|anthropic|google|groq|ollama"),
-    model_id: Optional[str] = Query(None, description="Model ID override, e.g. claude-sonnet-4-5"),
+    body: BenchmarkRequest,
     db: AsyncSession = Depends(get_db),
     verdict: PolicyVerdict = Depends(enforce_governance_policy),
 ):
@@ -31,9 +27,16 @@ async def stream_llm(
 
     `provider` (cloud|local) controls which policy rules apply.
     `provider_type` and `model_id` override which LLM is actually called.
+    `context` is optional — when supplied, the response is scored for RAGAS
+    faithfulness/context-utilization against it once streaming completes.
+
+    POST + JSON body (rather than GET + query params) so `context` isn't
+    subject to URL length limits.
     """
     return StreamingResponse(
-        _orchestrator.run_and_record_benchmark(db, prompt, provider, provider_type, model_id),
+        _orchestrator.run_and_record_benchmark(
+            db, body.prompt, body.provider, body.provider_type, body.model_id, body.context
+        ),
         media_type="text/event-stream",
     )
 
